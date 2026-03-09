@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import AudioRecorder from './AudioRecorder';
 
+const LANG_MAP = { en: 'en-IN', hi: 'hi-IN', te: 'te-IN', ta: 'ta-IN' };
+
 function MessageInput({
   onSend,
   disabled,
@@ -16,46 +18,87 @@ function MessageInput({
   onTranscriptionComplete
 }) {
   const [input, setInput] = useState('');
-  const [transcribing, setTranscribing] = useState(false);
+  const [isListening, setIsListening] = useState(false);
   const pdfInputRef = useRef(null);
   const audioVideoInputRef = useRef(null);
   const uploadMenuRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const inputBeforeVoiceRef = useRef('');
+  const finalTranscriptRef = useRef('');
+
+  useEffect(() => {
+    if (transcribedText) setInput(transcribedText);
+  }, [transcribedText]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => { recognitionRef.current?.abort(); };
+  }, []);
+
+  const startListening = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      alert('Voice input requires Chrome or Edge browser.');
+      return;
+    }
+
+    // Save whatever is already typed
+    inputBeforeVoiceRef.current = input;
+    finalTranscriptRef.current = '';
+
+    const recognition = new SR();
+    recognition.lang = LANG_MAP[language] || 'en-IN';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    recognition.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript;
+        if (event.results[i].isFinal) {
+          finalTranscriptRef.current += transcript + ' ';
+        } else {
+          interim = transcript;
+        }
+      }
+      // Combine: text typed before mic + confirmed words + live preview
+      const combined = [
+        inputBeforeVoiceRef.current,
+        finalTranscriptRef.current.trim(),
+        interim
+      ].filter(Boolean).join(' ');
+      setInput(combined);
+    };
+
+    recognition.onend = () => setIsListening(false);
+    recognition.onerror = (e) => {
+      if (e.error === 'not-allowed' || e.error === 'permission-denied') {
+        alert('Microphone access denied. Please allow microphone access in your browser settings.');
+      } else if (e.error === 'network') {
+        alert('Voice input needs an internet connection (Chrome uses Google servers). Please check your network.');
+      } else if (e.error === 'audio-capture') {
+        alert('No microphone found. Please connect a microphone and try again.');
+      }
+      setIsListening(false);
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+    setIsListening(true); // set immediately, don't wait for onstart
+  };
+
+  const stopListening = () => {
+    recognitionRef.current?.stop();
+    // onend will fire and set isListening = false
+  };
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (input.trim()) {
       onSend(input);
       setInput('');
-      if (onTranscriptionComplete) {
-        onTranscriptionComplete();
-      }
-    }
-  };
-
-  useEffect(() => {
-    if (transcribedText) {
-      setInput(transcribedText);
-    }
-  }, [transcribedText]);
-
-  const handleAudioRecordingComplete = async (file) => {
-    setTranscribing(true);
-    try {
-      // console.log('Starting transcription...');
-      const result = await onAudioInput(file, language);
-      // console.log('Transcription result:', result);
-      if (result && result.text && result.text.trim()) {
-        setInput(result.text.trim());
-        // console.log('Text set to input:', result.text);
-      } else {
-        // console.warn('No text in result:', result);
-        alert('Could not transcribe audio. Please speak clearly and try again, or ensure your microphone is working properly.');
-      }
-    } catch (error) {
-      // console.error('Transcription error:', error);
-      alert('Transcription failed. Please try again.');
-    } finally {
-      setTranscribing(false);
+      if (onTranscriptionComplete) onTranscriptionComplete();
     }
   };
 
@@ -72,15 +115,9 @@ function MessageInput({
   const handleAudioVideoChange = (e) => {
     const file = e.target.files[0];
     if (file) {
-      const validTypes = [
-        'audio/mpeg', 'audio/wav', 'audio/mp4', 'audio/m4a', 'audio/ogg',
-        'video/mp4', 'video/avi', 'video/quicktime', 'video/webm', 'video/x-matroska'
-      ];
-
       const validExtensions = ['.mp3', '.wav', '.m4a', '.flac', '.ogg', '.mp4', '.avi', '.mov', '.mkv', '.webm'];
       const fileExt = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
-
-      if (validTypes.includes(file.type) || validExtensions.includes(fileExt)) {
+      if (validExtensions.includes(fileExt)) {
         onAudioVideoUpload(file);
       } else {
         alert('Please upload a valid audio or video file');
@@ -96,25 +133,14 @@ function MessageInput({
     ta: 'சட்ட கேள்வி கேளுங்கள்...'
   };
 
-  // Close upload menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (uploadMenuRef.current && !uploadMenuRef.current.contains(event.target)) {
-        // Check if click is not on the attach button
-        const attachBtn = event.target.closest('.attach-btn');
-        if (!attachBtn) {
-          onCloseUploadMenu();
-        }
+        if (!event.target.closest('.attach-btn')) onCloseUploadMenu();
       }
     };
-
-    if (showUploadMenu) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
+    if (showUploadMenu) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showUploadMenu, onCloseUploadMenu]);
 
   return (
@@ -124,16 +150,10 @@ function MessageInput({
           <label className="upload-menu-item">
             <span>📄</span>
             <span>Upload PDF</span>
-            <input
-              type="file"
-              accept=".pdf"
-              onChange={handlePDFChange}
-              ref={pdfInputRef}
-              style={{ display: 'none' }}
-            />
+            <input type="file" accept=".pdf" onChange={handlePDFChange} ref={pdfInputRef} style={{ display: 'none' }} />
           </label>
           <label className="upload-menu-item">
-            <span>🎤</span>
+            <span>🎥</span>
             <span>Upload Audio/Video</span>
             <input
               type="file"
@@ -147,12 +167,7 @@ function MessageInput({
       )}
 
       <form onSubmit={handleSubmit} className="input-form">
-        <button
-          type="button"
-          className="attach-btn"
-          onClick={onAttachClick}
-          title="Upload document or audio/video"
-        >
+        <button type="button" className="attach-btn" onClick={onAttachClick} title="Upload document or audio/video">
           📎
         </button>
 
@@ -160,21 +175,19 @@ function MessageInput({
           type="text"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder={transcribing ? 'Transcribing...' : (placeholderText[language] || placeholderText.en)}
-          disabled={disabled || transcribing}
+          placeholder={isListening ? 'Listening...' : (placeholderText[language] || placeholderText.en)}
+          disabled={disabled}
           className="message-input"
         />
 
         <AudioRecorder
-          onRecordingComplete={handleAudioRecordingComplete}
-          disabled={disabled || loading || transcribing}
+          isListening={isListening}
+          onStart={startListening}
+          onStop={stopListening}
+          disabled={disabled || loading}
         />
 
-        <button
-          type="submit"
-          disabled={disabled || !input.trim() || loading}
-          className="send-btn"
-        >
+        <button type="submit" disabled={disabled || !input.trim() || loading} className="send-btn">
           {loading ? <span className="loading-spinner"></span> : '↑'}
         </button>
       </form>
