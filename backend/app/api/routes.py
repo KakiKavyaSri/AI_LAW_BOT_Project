@@ -761,11 +761,13 @@ async def login(login_id: str = Body(...), password: str = Body(...)):
 
 
 @router.post("/logout")
-async def logout(session_token: str = Body(...)):
+async def logout(request: dict = Body(...)):
     """Logout user"""
     try:
         from app.auth.auth_service import auth_service
-        auth_service.delete_session(session_token)
+        session_token = request.get('session_token')
+        if session_token:
+            auth_service.delete_session(session_token)
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

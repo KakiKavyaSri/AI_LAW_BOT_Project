@@ -14,13 +14,13 @@ class SpeechToTextService:
     SUPPORTED_AUDIO_FORMATS = {".mp3", ".wav", ".m4a", ".flac", ".ogg", ".webm", ".mp4"}
     SUPPORTED_VIDEO_FORMATS = {".mp4", ".avi", ".mov", ".mkv", ".webm"}
 
-    def __init__(self, model_size: str = "tiny"):
+    def __init__(self, model_size: str = "base"):
         """
         Initialize faster-whisper model (lazy loading)
 
         Args:
             model_size: Whisper model size (tiny, base, small, medium, large)
-                       'tiny' is the fastest, fully multilingual (99 languages)
+                       'base' is recommended - good balance of speed and accuracy
         """
         self.model_size = model_size
         self._model = None
@@ -99,13 +99,16 @@ class SpeechToTextService:
         print(f"[WHISPER] File exists: {os.path.exists(audio_path)}")
         print(f"[WHISPER] File size: {os.path.getsize(audio_path) if os.path.exists(audio_path) else 0} bytes")
 
-        # faster-whisper transcribe options
-        # language=None enables automatic language detection (multilingual)
+        # Optimized options for voice input transcription
         transcribe_options = {
             "beam_size": 5,
-            "no_speech_threshold": 0.3,
+            "best_of": 5,
+            "patience": 1.0,
+            "length_penalty": 1.0,
+            "temperature": 0.0,
+            "compression_ratio_threshold": 2.4,
             "log_prob_threshold": -1.0,
-            "condition_on_previous_text": False,
+            "no_speech_threshold": 0.6,
         }
         if language:
             transcribe_options["language"] = language
